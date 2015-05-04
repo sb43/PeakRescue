@@ -16,14 +16,12 @@ use File::Spec;
 use FindBin qw($Bin);
 use List::Util qw(max min);
 use Capture::Tiny qw(:all);
-use warnings FATAL => 'all';
 use Data::Dumper;
 use Log::Log4perl;
-Log::Log4perl->init("$Bin/../config/log4perl.test.conf");
+Log::Log4perl->init("$Bin/../config/log4perl.gt.conf");
+my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
 my @std_chr=(1..22,'X','Y','MT');
-
-my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
 use PeakRescue::GlobalTranscript;
 
