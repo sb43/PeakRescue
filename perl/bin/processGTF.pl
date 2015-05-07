@@ -47,6 +47,7 @@ sub option_builder {
 		exit;
 	}
 	pod2usage(q{'-gtf' gtf must be specified.}) unless(defined $opts{'gtf'}) ;
+	
 	return \%opts;
 }
 

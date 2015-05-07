@@ -34,6 +34,8 @@ sub option_builder {
 					'h|help'    => \$opts{'h'},
 					'bam|sampleBam=s' => \$opts{'bam'},
 					'bed|intervalBed=s' => \$opts{'bed'},
+					'gb|geneBoundariesBed=s' => \$opts{'gb'},
+					'g|genomeFasta=s' => \$opts{'g'},
 					'o|outdir=s'  => \$opts{'o'},
 					'v|version'  => \$opts{'v'},
 	);
@@ -47,6 +49,7 @@ sub option_builder {
 	}
 	pod2usage(q{'-bed' bed file must be specified.}) unless(defined $opts{'bed'}) ;
 	pod2usage(q{'-bam' bam file must be specified.}) unless(defined $opts{'bam'}) ;
+	pod2usage(q{'-g' genome file must be specified.}) unless(defined $opts{'g'}) ;
 	return \%opts;
 }
 
@@ -67,6 +70,8 @@ Required Options (bam and bed interval files must be defined):
 
   --intervalBed       (-bed) gene interval bed file
   --sampleBam         (-bam) sample bam file 
+  --geneBoundariesBed (-gb) gene boundaries bed file 
+  --genomeFasta       (-g) fasta reference genome file 
   
 Optional :
 
