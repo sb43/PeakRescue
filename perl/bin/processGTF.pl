@@ -10,22 +10,20 @@ use strict;
 use FindBin qw($Bin);
 use English qw( -no_match_vars );
 use Pod::Usage qw(pod2usage);
-use Carp;
 use Getopt::Long;
 use Try::Tiny qw(try catch finally);
-use warnings FATAL => 'all';
-use autodie qw(:all);
 
 use PeakRescue::GlobalTranscript;
-
+my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
 try {
   my ($options) = option_builder();
   PeakRescue::GlobalTranscript->new($options);
 }
 catch {
- croak "\n\n".$_."\n\n" if($_);
+ $log->logcroak($_);
 };
+
 
 sub option_builder {
 	my ($factory) = @_;
@@ -49,6 +47,7 @@ sub option_builder {
 		exit;
 	}
 	pod2usage(q{'-gtf' gtf must be specified.}) unless(defined $opts{'gtf'}) ;
+	
 	return \%opts;
 }
 
