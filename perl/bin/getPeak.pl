@@ -34,7 +34,6 @@ sub option_builder {
 					'h|help'    => \$opts{'h'},
 					'bam|sampleBam=s' => \$opts{'bam'},
 					'bed|intervalBed=s' => \$opts{'bed'},
-					'gb|geneBoundariesBed=s' => \$opts{'gb'},
 					'g|genomeFasta=s' => \$opts{'g'},
 					'o|outdir=s'  => \$opts{'o'},
 					'v|version'  => \$opts{'v'},
@@ -70,7 +69,6 @@ Required Options (bam and bed interval files must be defined):
 
   --intervalBed       (-bed) gene interval bed file
   --sampleBam         (-bam) sample bam file 
-  --geneBoundariesBed (-gb) gene boundaries bed file 
   --genomeFasta       (-g) fasta reference genome file 
   
 Optional :
