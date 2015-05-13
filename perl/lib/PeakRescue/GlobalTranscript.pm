@@ -7,26 +7,24 @@ BEGIN {
   $SIG{__WARN__} = sub {warn $_[0] unless(( $_[0] =~ m/^Subroutine Tabix.* redefined/) || ($_[0] =~ m/^Use of uninitialized value \$buf/))};
 };
 
-#use lib qq(/software/CGP/canPipe/test/lib/perl5/);
 use strict;
+
 use Tabix;
-use File::Path qw(mkpath);
+use File::Path qw(mkpath remove_tree);
 use File::Basename;
 use File::Spec;
 use FindBin qw($Bin);
 use List::Util qw(max min);
 use Capture::Tiny qw(:all);
-use warnings FATAL => 'all';
 use Data::Dumper;
 use Log::Log4perl;
-Log::Log4perl->init("$Bin/../config/log4perl.test.conf");
 
-my @std_chr=(1..22,'X','Y','MT');
+use PeakRescue::Base;
 
+Log::Log4perl->init("$Bin/../config/log4perl.gt.conf");
 my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
-use PeakRescue::GlobalTranscript;
-
+my @std_chr=(1..22,'X','Y','MT');
 
 =head2 new
 Initialise the object and populate hash with options, create tabix object and do GTF processing
@@ -64,6 +62,7 @@ sub _init {
   if ($options->{'o'} && ! (-d $options->{'o'})) {
   	$log->debug("Creating dir:".$options->{'o'});
 		mkpath($options->{'o'});
+		
   }
 	elsif(!$options->{'o'}) {
    $options->{'o'}=$dir_name;
@@ -72,6 +71,9 @@ sub _init {
   	$log->logcroak("Unable to create directory");
   }
 	$options->{'f'}=$options->{'o'}.'/'.$file_name;	
+	# create tmp dir
+	mkpath($options->{'o'}.'/'.'tmp_gt');
+	$options->{'tmpdir'}=$options->{'o'}.'/'.'tmp_gt';
 	$self->{'options'} = $options;
 	
 	return;
@@ -123,6 +125,7 @@ sub _check_tabix_overlap {
 	my ($self) = @_;
 	my $tabix = $self->tabix_obj;
 	my $gtf_record;
+	
 	# create outpt bed files names...
 	my $unique_regions_bed=$self->options->{'f'}.'.unique_regions.bed';
 	my $global_transcript_bed=$self->options->{'f'}.'.global_transcript.bed';
@@ -130,16 +133,19 @@ sub _check_tabix_overlap {
 	my $global_transcript_gene_length_bed=$self->options->{'f'}.'.global_transcript_gene_length.bed';
 	my $unique_segment_gene_length_bed=$self->options->{'f'}.'.unique_segment_gene_length.bed';
 	# create file handlers to use...
-	my ($fh_array)=$self->_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed],1);
+	my ($fh_array)=PeakRescue::Base::_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed],1);
 	# deal with user defined chromosomes if any...
 	my @chr_to_analyse;
 	
-	if (!$self->options->{'a'}) {
+	if (!$self->options->{'a'} && !$self->options->{'chr'} ) {
 			$log->debug("Warning option -chr or  -a : Chromosomes to analyse not defined");
 			$log->debug("using standard list of chromosomes defined for Human [ 1..22,X,Y,MT]");
 			$log->debug("To process all chromosmes in a GTF file please provide option -a ");
 		} 
 	elsif($self->options->{'chr'}) {
+		if(! -e $self->options->{'chr'}) {
+				$log->logcroak("Option chr must be a file, please use $0 -h to get full usage");
+			}
 		open(my $chr_user, '<', $self->options->{'chr'});
 		@chr_to_analyse=<$chr_user>; 
 	}
@@ -174,13 +180,16 @@ sub _check_tabix_overlap {
 				$gtf_record->{$gene}="$chr\t".($start - 1)."\t$stop\t$gene\n";
 				}
 		}
+		 
 		$log->debug(">>>>>>>Calculating global transcript intervals for chromosome:$chr ");
 		$self->_process_gtf_lines_per_gene($gtf_record,$chr,@$fh_array[0],@$fh_array[1],@$fh_array[2],@$fh_array[3],@$fh_array[4]);
 		$gtf_record=();
 		$log->debug(">>>>>>>Done.......chr: $chr");
 	}
-	$self->_close_fh($fh_array);
+	PeakRescue::Base::_close_fh($fh_array);
 	$log->debug(">>>>>>>GTF preprosessing completed successfully for:".$self->options->{'gtf'});
+	#cleanup tmp folder
+	PeakRescue::Base::cleanup_dir($self->options->{'tmpdir'});
 	
 }
 
@@ -198,13 +207,14 @@ sub _process_gtf_lines_per_gene {
 	my ($self,$gtf_record,$chr,$fh_unique_regions,$fh_global_transcript,$fh_geneboundaries,$fh_global_transcript_gene_length,$fh_unique_segment_gene_length)=@_;
 	my $count=0;
 	my $total=keys %$gtf_record;
-	my $tmp_gene_file=$self->options->{'o'}.'/'.'tmp_gene_bed.txt';
+	my $tmp_gene_file=$self->options->{'tmpdir'}.'/tmp_gene_bed.txt';
+	print "$tmp_gene_file\n";
 	foreach my $gene (sort keys %$gtf_record) {
 		$count++;
 		if($count % 100 == 0) {
 			$log->debug("Completed :$count genes of total:$total genes on chromosme:$chr");
 		}
-		my($fh)=$self->_create_fh([$tmp_gene_file],1);
+		my($fh)=PeakRescue::Base::_create_fh([$tmp_gene_file],1);
 		my $fh_str=@$fh[0];
 		print $fh_str $gtf_record->{$gene};
 		my ($unique_regions,$gt_intervals,$gt_start,$gt_end,$gt_length,$unique_seg_gene_length) = $self->_merge_intervals($gene,$tmp_gene_file);
@@ -219,30 +229,6 @@ sub _process_gtf_lines_per_gene {
 }
 
 
-=head2 _create_fh
-Create file handlers 
-Inputs
-=over 2
-=item file_names -array of file names
-=item overwrite - flag to overwrite existing file
-=back
-=cut
-
-sub _create_fh {
-	my ($self,$file_names,$overwrite)=@_;;
-	my $fh_array;
-	foreach my $file(@$file_names) {
-		if( -e $file && !$overwrite) {
-			$log->debug("Output file $file already exists at:".$self->options->{'o'});
-			next;
-		}
-		local *tmp_fh;
-		open(tmp_fh,'>',$file) || $log->logcroak("Unable to create output file $!");
-		push(@$fh_array,*tmp_fh);
-	}
-	
-	return $fh_array;
-}
 
 
 =head2 _merge_intervals
@@ -299,9 +285,9 @@ Inputs
 sub _get_unique_regions {
 	my ($self,$chr,$start,$stop,$gene,$total_len,$output)=@_;
 	my $overlaped_gene_flag=0;
-	my $tmp_sorted_bed=$self->options->{'o'}.'/'.'tmp_gene_sortedBed.txt';
-	my $tmp_overlap_file=$self->options->{'o'}.'/'.'tmp_genes_overlap.txt';
-	my($fh_overlap)=$self->_create_fh([$tmp_overlap_file],1);
+	my $tmp_sorted_bed=$self->options->{'tmpdir'}.'/tmp_gene_sortedBed.txt';
+	my $tmp_overlap_file=$self->options->{'tmpdir'}.'/tmp_genes_overlap.txt';
+	my($fh_overlap)=PeakRescue::Base::_create_fh([$tmp_overlap_file],1);
 	my $fh_overlap_str=@$fh_overlap[0];
 	
 	my $tabix=$self->tabix_obj;
@@ -320,7 +306,7 @@ sub _get_unique_regions {
 		close($fh_overlap_str);
 		# if overlapped genes found do subtract bed 
 		if($overlaped_gene_flag){
-			my($fh_sorted)=$self->_create_fh([$tmp_sorted_bed],1);
+			my($fh_sorted)=PeakRescue::Base::_create_fh([$tmp_sorted_bed],1);
 			my $fh_soretd_str=@$fh_sorted[0];
 			print $fh_soretd_str $output;
 			my($out,$stderr,$exit) = capture {system("subtractBed -a $tmp_sorted_bed -b $tmp_overlap_file | mergeBed -i - ")};
@@ -350,19 +336,7 @@ sub _get_unique_regions {
 }
 
 
-=head2 _close_fh
-Close file handlers 
-Inputs
-=over 2
-=item file_names -array of file handlers
-=back
-=cut
-sub _close_fh {
-	my ($self,$file_names)=@_;;
-	foreach my $fh(@$file_names) {
-		close($fh);
-	}
-}
+
 
 sub tabix_obj {
 shift->{'tabix_obj'};
