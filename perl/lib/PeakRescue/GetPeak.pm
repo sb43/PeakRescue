@@ -223,10 +223,10 @@ my ($self,$bam_object,$chr,$start,$end,$gene)=@_;
 	# sort bam file
 	##Bio::DB::Bam->sort_core(1,$tmp_gene_file,$tmp_gene_sorted);
 	#my($clipped_bam)=$self->_run_clipOver("$tmp_gene_sorted.bam");
-	my ($gene_bam)=$self->_get_bam_object($tmp_gene_file);
-  my ($coverage) = $gene_bam->features(-type => 'coverage', -seq_id => $chr, -start => $start, -end => $end);
-  #option2 samtools mpipeup -- very slow/ GATK very slow...
-	#my $cmd= "~/software/samtools-1.2/samtools mpileup $tmp_gene_file -d $MAX_PILEUP_DEPTH -A -f ".$self->options->{'g'}. " -r $region --no-BAQ ";
+	#my ($gene_bam)=$self->_get_bam_object($tmp_gene_file);
+  #my ($coverage) = $gene_bam->features(-type => 'coverage', -seq_id => $chr, -start => $start, -end => $end);
+  #option2 samtools mpipeup -- very slow/ GATK too slow...
+	my $cmd= "~/software/samtools-1.2/samtools mpileup $tmp_gene_file -d $MAX_PILEUP_DEPTH -A -f ".$self->options->{'g'}. " -r $region --no-BAQ ";
 	#my ($out,$stderr,$exit) = capture{system($cmd)};
 	#my ($max)=$self->_parse_pileup($out);
 	
