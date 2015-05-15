@@ -62,7 +62,6 @@ sub _init {
   if ($options->{'o'} && ! (-d $options->{'o'})) {
   	$log->debug("Creating dir:".$options->{'o'});
 		mkpath($options->{'o'});
-		
   }
 	elsif(!$options->{'o'}) {
    $options->{'o'}=$dir_name;
@@ -130,24 +129,27 @@ sub _check_tabix_overlap {
 	my $unique_regions_bed=$self->options->{'f'}.'.unique_regions.bed';
 	my $global_transcript_bed=$self->options->{'f'}.'.global_transcript.bed';
 	my $geneboundaries_bed=$self->options->{'f'}.'.geneboundaries.bed';
-	my $global_transcript_gene_length_bed=$self->options->{'f'}.'.global_transcript_gene_length.bed';
-	my $unique_segment_gene_length_bed=$self->options->{'f'}.'.unique_segment_gene_length.bed';
+	my $global_transcript_gene_length_bed=$self->options->{'f'}.'.global_transcript_gene_length.tab';
+	my $unique_segment_gene_length_bed=$self->options->{'f'}.'.unique_segment_gene_length.tab';
 	# create file handlers to use...
 	my ($fh_array)=PeakRescue::Base::_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed],1);
-	# deal with user defined chromosomes if any...
-	my @chr_to_analyse;
+	# add header lines
+	$self->_add_header($fh_array);
+	if($self->options->{'u'}) {
+		$log->debug("Calculating unique regions");
+	}else {
+		$log->debug("To calculate unique regions please sepcify -u ");
+	}
 	
+	# deal with user defined chromosomes if any...
+	my $chr_to_analyse=undef;
 	if (!$self->options->{'a'} && !$self->options->{'chr'} ) {
 			$log->debug("Warning option -chr or  -a : Chromosomes to analyse not defined");
 			$log->debug("using standard list of chromosomes defined for Human [ 1..22,X,Y,MT]");
 			$log->debug("To process all chromosmes in a GTF file please provide option -a ");
 		} 
 	elsif($self->options->{'chr'}) {
-		if(! -e $self->options->{'chr'}) {
-				$log->logcroak("Option chr must be a file, please use $0 -h to get full usage");
-			}
-		open(my $chr_user, '<', $self->options->{'chr'});
-		@chr_to_analyse=<$chr_user>; 
+		 @$chr_to_analyse=split(',',$self->options->{'chr'});
 	}
 	elsif(defined $self->options->{'a'}) {
 			$log->debug("Processing all chromosomes");
@@ -160,12 +162,12 @@ sub _check_tabix_overlap {
 	foreach my $chr (@chrnames) {
 		# use user provided chromosome names
 		if($self->options->{'chr'}) {
-			next if !{map { $_ => 1 } split('\n', "@chr_to_analyse")}->{"$chr"};
+			#next if !{map { $_ => 1 } split('\n', "@chr_to_analyse")}->{"$chr"};
+			next if (grep (/^$chr$/, @$chr_to_analyse) ne 1 );
 		}
 		elsif(!$self->options->{'a'}) {
-			next if !{map { $_ => 1 } @std_chr}->{$chr};
+			next if (grep (/^$chr$/, @std_chr) ne 1);
 		} 
-		
 		my $res = $tabix->query($chr);
 		while(my $record = $tabix->read($res)){
 		# the returned data is the ORIGINAL string from the file
@@ -180,7 +182,6 @@ sub _check_tabix_overlap {
 				$gtf_record->{$gene}="$chr\t".($start - 1)."\t$stop\t$gene\n";
 				}
 		}
-		 
 		$log->debug(">>>>>>>Calculating global transcript intervals for chromosome:$chr ");
 		$self->_process_gtf_lines_per_gene($gtf_record,$chr,@$fh_array[0],@$fh_array[1],@$fh_array[2],@$fh_array[3],@$fh_array[4]);
 		$gtf_record=();
@@ -190,8 +191,34 @@ sub _check_tabix_overlap {
 	$log->debug(">>>>>>>GTF preprosessing completed successfully for:".$self->options->{'gtf'});
 	#cleanup tmp folder
 	PeakRescue::Base::cleanup_dir($self->options->{'tmpdir'});
-	
 }
+
+
+=head2 _add_header
+Add header lines to each file
+=item gtf_record -has containing GTF lines per chromosome
+=item chr -chromosome number
+=item fh_array file handlers to store respective data
+=back
+=cut
+
+sub _add_header {
+	my ($self,$fh_array)=@_;
+	my $fh_unique_regions = @$fh_array[0];
+	my $fh_global_transcript = @$fh_array[1];
+	my $fh_geneboundaries = @$fh_array[2];
+	my $fh_global_transcript_gene_length = @$fh_array[3];
+	my $fh_unique_segment_gene_length = @$fh_array[4];
+	
+	print $fh_unique_regions "#chr\tstart\tend\tgene\n";
+  print $fh_global_transcript "#chr\tstart\tend\tgene\n";
+  print $fh_geneboundaries "#chr\tstart\tend\tgene\n";
+  print $fh_global_transcript_gene_length "#gene\tgt_length\n";
+  print $fh_unique_segment_gene_length "#gene\tUnique_seg_length\n";
+ 
+ 1;
+}
+
 
 =head2 _process_gtf_lines_per_gene
 get GTF lines per genes to merge and get GLOBAL transcript and unique intervals 
@@ -208,7 +235,6 @@ sub _process_gtf_lines_per_gene {
 	my $count=0;
 	my $total=keys %$gtf_record;
 	my $tmp_gene_file=$self->options->{'tmpdir'}.'/tmp_gene_bed.txt';
-	print "$tmp_gene_file\n";
 	foreach my $gene (sort keys %$gtf_record) {
 		$count++;
 		if($count % 100 == 0) {
@@ -218,17 +244,17 @@ sub _process_gtf_lines_per_gene {
 		my $fh_str=@$fh[0];
 		print $fh_str $gtf_record->{$gene};
 		my ($unique_regions,$gt_intervals,$gt_start,$gt_end,$gt_length,$unique_seg_gene_length) = $self->_merge_intervals($gene,$tmp_gene_file);
-		print $fh_unique_regions map { $_."\t$gene\n" } (split '\n', $unique_regions); 
-		print $fh_global_transcript map { $_."\t$gene\n" } (split '\n', $gt_intervals);
+		if($self->options->{'u'}) {
+			print $fh_unique_regions map { $_."\t$gene\n" } (split "\n", $unique_regions);
+			print $fh_unique_segment_gene_length "$gene\t$unique_seg_gene_length\n";
+		}
+		print $fh_global_transcript map { $_."\t$gene\n" } (split "\n", $gt_intervals);
 		print $fh_geneboundaries "$chr\t$gt_start\t$gt_end\t$gene\n";
 		print $fh_global_transcript_gene_length "$gene\t$gt_length\n";
-		print $fh_unique_segment_gene_length "$gene\t$unique_seg_gene_length\n";
 		close($fh_str);
 	}
 	return
 }
-
-
 
 
 =head2 _merge_intervals
@@ -265,8 +291,11 @@ sub _merge_intervals {
 	#get GT boundaries...
 	my $gt_start = min(@$g_start);
 	my $gt_end = max(@$g_end);
-	
-	my($unique_regions,$unique_seg_gene_length) = $self->_get_unique_regions($chr,$gt_start,$gt_end,$gene,$total_len,$out);
+	my $unique_regions=undef;
+	my $unique_seg_gene_length=undef;
+	if($self->options->{'u'}) {
+		($unique_regions,$unique_seg_gene_length) = $self->_get_unique_regions($chr,$gt_start,$gt_end,$gene,$total_len,$out);
+	}
 	return ($unique_regions,$out,$gt_start,$gt_end,$total_len,$unique_seg_gene_length);
 }
 
@@ -325,8 +354,6 @@ sub _get_unique_regions {
 				# no need to add +1 as bed positions are open ended...
 				$u_total_len+=($u_stop-$u_start);
 			}
-			
-			
 			return ($out,$u_total_len);
 		}
 		# No overlap found return original gene intervals as unique regions
