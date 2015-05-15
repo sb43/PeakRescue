@@ -56,18 +56,17 @@ __END__
 
 =head1 NAME
 
-getPeak.pl - process GTF file
+getPeak.pl - process bam and gene boundaries bed file 
 
-Get max coverage peak per a gene this file is used in later steps of PeakRescue:
+Get max coverage peak per gene --this file is used in later step of PeakRescue:
 
 =head1 SYNOPSIS
-
 
 getPeak.pl -bam -bed   [ -o -h -v ]
 
 Required Options (bam and bed interval files must be defined):
 
-  --intervalBed       (-bed) gene interval bed file
+  --intervalBed       (-bed) gene interval bed file 
   --sampleBam         (-bam) sample bam file 
   --genomeFasta       (-g) fasta reference genome file 
   
