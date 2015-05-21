@@ -112,6 +112,7 @@ sub _do_max_peak_calculation {
 	open(my $peak_fh, '>>', $self->options->{'o'}.'/'.$self->options->{'f'}.'_peak.txt');
 	# check progress required as this is long process if beaks in between can be restarted from where it left using progress file
 	my $progress_file=$self->options->{'o'}.'/'.'progress.txt';
+	if( -e $progress_file) { $log->info("Progress file exists, analysis will be resumed, to restart analysis please remove progress file"); }
 	open(my $progress_fh, '>>', $progress_file);
 	open(my $read_progress, '<', $progress_file);
 	my @chr_analysed=<$read_progress>; 
@@ -147,10 +148,10 @@ sub _do_max_peak_calculation {
 }
 	close($peak_fh);
 	close($progress_fh);
-	PeakRescue::Base::cleanup_dir($self->options->{'tmpdir'});
+	
+	#PeakRescue::Base::cleanup_dir($self->options->{'tmpdir'});
 	
 }
-
 
 =head2  _get_tabix_object
 create tabix object for a user provided bed file
@@ -195,6 +196,7 @@ my ($self,$bam_object,$chr,$start,$end,$gene)=@_;
 	my $tmp_gene_file=$self->options->{'tmpdir'}.'/tmp_gene.bam';
 	# create bio db bam object
 	my $bam = Bio::DB::Bam->open($tmp_gene_file,'w');
+	
 	#write header
 	$bam->header_write($bam_object->header);
 	# create temp file
@@ -222,15 +224,16 @@ my ($self,$bam_object,$chr,$start,$end,$gene)=@_;
 		#print "No reads for :  $gene\n";
 		return "0";
 	} 
-	#Bio::DB::Bam->index_build($tmp_gene_file);
+	Bio::DB::Bam->index_build($tmp_gene_file);
 	# create tmp file
 	my $tmp_gene_sorted=$self->options->{'tmpdir'}.'/tmp_gene_name_sorted';
 	# name sorted bam required for clipOver
 	Bio::DB::Bam->sort_core(1,$tmp_gene_file,$tmp_gene_sorted);
 	my($clipped_bam)=$self->_run_clipOver("$tmp_gene_sorted.bam");
-	my ($gene_bam)=$self->_get_bam_object($clipped_bam);
+	my ($gene_bam)=$self->_get_bam_object($clipped_bam);	
 	my ($coverage) = $gene_bam->features(-type => 'coverage', -seq_id => $chr, -start => $start, -end => $end);
 	return max($coverage->coverage);
+	
 	
 	#option2 samtools mpipeup and GATK [run separately] too slow.
   # need samtools 1.1 or above which takes care of overlapping read pairs... 
@@ -303,7 +306,6 @@ sub _print_peak {
 sub options {
 shift->{'options'};
 }
-
 
 
 

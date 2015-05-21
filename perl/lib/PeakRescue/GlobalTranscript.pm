@@ -131,8 +131,10 @@ sub _check_tabix_overlap {
 	my $geneboundaries_bed=$self->options->{'f'}.'.geneboundaries.bed';
 	my $global_transcript_gene_length_bed=$self->options->{'f'}.'.global_transcript_gene_length.tab';
 	my $unique_segment_gene_length_bed=$self->options->{'f'}.'.unique_segment_gene_length.tab';
+	my $non_overlapping_genes=$self->options->{'f'}.'.non_overlapping_geneboundaries.bed';
+
 	# create file handlers to use...
-	my ($fh_array)=PeakRescue::Base::_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed],1);
+	my ($fh_array)=PeakRescue::Base::_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed,$non_overlapping_genes],1);
 	# add header lines
 	$self->_add_header($fh_array);
 	if($self->options->{'u'}) {
@@ -183,7 +185,7 @@ sub _check_tabix_overlap {
 				}
 		}
 		$log->debug(">>>>>>>Calculating global transcript intervals for chromosome:$chr ");
-		$self->_process_gtf_lines_per_gene($gtf_record,$chr,@$fh_array[0],@$fh_array[1],@$fh_array[2],@$fh_array[3],@$fh_array[4]);
+		$self->_process_gtf_lines_per_gene($gtf_record,$chr,@$fh_array[0],@$fh_array[1],@$fh_array[2],@$fh_array[3],@$fh_array[4],@$fh_array[5]);
 		$gtf_record=();
 		$log->debug(">>>>>>>Done.......chr: $chr");
 	}
@@ -209,12 +211,13 @@ sub _add_header {
 	my $fh_geneboundaries = @$fh_array[2];
 	my $fh_global_transcript_gene_length = @$fh_array[3];
 	my $fh_unique_segment_gene_length = @$fh_array[4];
-	
+	my $fh_non_overlapping_genes = @$fh_array[5];
 	print $fh_unique_regions "#chr\tstart\tend\tgene\n";
   print $fh_global_transcript "#chr\tstart\tend\tgene\n";
   print $fh_geneboundaries "#chr\tstart\tend\tgene\n";
   print $fh_global_transcript_gene_length "#gene\tgt_length\n";
   print $fh_unique_segment_gene_length "#gene\tUnique_seg_length\n";
+  print $fh_non_overlapping_genes "#chr\tstart\tend\tgene\n";
  
  1;
 }
@@ -231,7 +234,7 @@ Inputs
 =cut
 
 sub _process_gtf_lines_per_gene {
-	my ($self,$gtf_record,$chr,$fh_unique_regions,$fh_global_transcript,$fh_geneboundaries,$fh_global_transcript_gene_length,$fh_unique_segment_gene_length)=@_;
+	my ($self,$gtf_record,$chr,$fh_unique_regions,$fh_global_transcript,$fh_geneboundaries,$fh_global_transcript_gene_length,$fh_unique_segment_gene_length,$fh_non_overlapping_genes)=@_;
 	my $count=0;
 	my $total=keys %$gtf_record;
 	my $tmp_gene_file=$self->options->{'tmpdir'}.'/tmp_gene_bed.txt';
@@ -243,14 +246,18 @@ sub _process_gtf_lines_per_gene {
 		my($fh)=PeakRescue::Base::_create_fh([$tmp_gene_file],1);
 		my $fh_str=@$fh[0];
 		print $fh_str $gtf_record->{$gene};
-		my ($unique_regions,$gt_intervals,$gt_start,$gt_end,$gt_length,$unique_seg_gene_length) = $self->_merge_intervals($gene,$tmp_gene_file);
+		my ($unique_regions,$gt_intervals,$gt_start,$gt_end,$gt_length,$unique_seg_gene_length,$overlaped_gene_flag) = $self->_merge_intervals($gene,$tmp_gene_file);
 		if($self->options->{'u'}) {
 			print $fh_unique_regions map { $_."\t$gene\n" } (split "\n", $unique_regions);
 			print $fh_unique_segment_gene_length "$gene\t$unique_seg_gene_length\n";
+			# write non overlapping gene boundaries, useful for coverage calculation
+			if(!$overlaped_gene_flag) {
+				print $fh_non_overlapping_genes "$chr\t$gt_start\t$gt_end\t$gene\n";
+			}
 		}
 		print $fh_global_transcript map { $_."\t$gene\n" } (split "\n", $gt_intervals);
 		print $fh_geneboundaries "$chr\t$gt_start\t$gt_end\t$gene\n";
-		print $fh_global_transcript_gene_length "$gene\t$gt_length\n";
+		print $fh_global_transcript_gene_length "$gene\t$gt_length\n";		
 		close($fh_str);
 	}
 	return
@@ -293,10 +300,11 @@ sub _merge_intervals {
 	my $gt_end = max(@$g_end);
 	my $unique_regions=undef;
 	my $unique_seg_gene_length=undef;
+	my $overlaped_gene_flag=0;
 	if($self->options->{'u'}) {
-		($unique_regions,$unique_seg_gene_length) = $self->_get_unique_regions($chr,$gt_start,$gt_end,$gene,$total_len,$out);
+		($unique_regions,$unique_seg_gene_length,$overlaped_gene_flag) = $self->_get_unique_regions($chr,$gt_start,$gt_end,$gene,$total_len,$out);
 	}
-	return ($unique_regions,$out,$gt_start,$gt_end,$total_len,$unique_seg_gene_length);
+	return ($unique_regions,$out,$gt_start,$gt_end,$total_len,$unique_seg_gene_length,$overlaped_gene_flag);
 }
 
 =head2 _get_unique_regions
@@ -354,11 +362,11 @@ sub _get_unique_regions {
 				# no need to add +1 as bed positions are open ended...
 				$u_total_len+=($u_stop-$u_start);
 			}
-			return ($out,$u_total_len);
+			return ($out,$u_total_len,$overlaped_gene_flag);
 		}
 		# No overlap found return original gene intervals as unique regions
 		else {
-			return ($output,$total_len);
+			return ($output,$total_len,$overlaped_gene_flag);
 		}
 }
 
