@@ -33,6 +33,9 @@ const my $SUPP_ALIGNMENT => 0x800;
 const my $DUP_READ => 0x400;
 const my $VENDER_FAIL => 0x200;
 
+const my $GATK_PATH => "~/software/gatk2.8/dist";
+const my $SAMTOOLS_PATH => "~/software/samtools-1.2";
+
 sub new {
 	my ($class,$options)=@_;
 	$log->trace('new');
@@ -108,8 +111,11 @@ Inputs
 sub _do_max_peak_calculation { 
 	my ($self)=@_;
 	my($bam_object)=$self->_get_bam_object($self->options->{'bam'});
-	my($tabix)=$self->_get_tabix_object();
-	open(my $peak_fh, '>>', $self->options->{'o'}.'/'.$self->options->{'f'}.'_peak.txt');
+	my($tabix)=$self->_get_tabix_object($self->options->{'bed'});
+	my($tabix_gt)=$self->_get_tabix_object($self->options->{'gt'});
+	my $peak_out=$self->options->{'o'}.'/'.$self->options->{'f'}.'_peak.txt';
+	$self->{'peak_file'}=$peak_out;
+	open(my $peak_fh, '>>', $peak_out);
 	# check progress required as this is long process if beaks in between can be restarted from where it left using progress file
 	my $progress_file=$self->options->{'o'}.'/'.'progress.txt';
 	if( -e $progress_file) { $log->info("Progress file exists, analysis will be resumed, to restart analysis please remove progress file"); }
@@ -132,13 +138,13 @@ sub _do_max_peak_calculation {
 			chomp;
 			my ($chr,$start,$end,$gene)=(split "\t", $record) [0,1,2,3];
 			$counter++;
-			if($counter % 1000 == 0) {
+			if($counter % 50 == 0) {
 				$log->debug("Calculated peak for chromosome: $chr ==>".$counter.' genes');
 				# can be used if hash is running out of memory
-				#$self->_print_peak($peak_data,$peak_fh);
-				#$peak_data=();
+				$self->_print_peak($peak_data,$peak_fh);
+				$peak_data=();
 			}
-			my($max_peak)=$self->_get_gene_bam_object($bam_object,$chr,$start,$end,$gene);
+			my($max_peak)=$self->_get_gene_bam_object($bam_object,$chr,$start,$end,$gene,$tabix_gt);
 			$peak_data->{$gene}=$max_peak;
 		}
 	# print peak data for each chromosome
@@ -149,7 +155,7 @@ sub _do_max_peak_calculation {
 	close($peak_fh);
 	close($progress_fh);
 	
-	#PeakRescue::Base::cleanup_dir($self->options->{'tmpdir'});
+	PeakRescue::Base->cleanup_dir($self->options->{'tmpdir'});
 	
 }
 
@@ -162,20 +168,20 @@ Inputs
 =cut
 
 sub _get_tabix_object {
-	my ($self)=shift;
+	my ($self,$bed_file)=@_;
 	my $tabix_obj;
-	my $bed_file = $self->options->{'bed'};
+	my ($file_name,$dir_name,$suffix) = fileparse($bed_file,qr/\.[^.]*/);
 	if (! -e $bed_file) {
 		$log->logcroak("Unable to find file : $bed_file ");
 	}
-	my $tmp_bed = $self->options->{'tmpdir'}.'/tmpbed_sorted.bed';
+	my $tmp_bed = $self->options->{'tmpdir'}."/$file_name\_tabix.bed";
 	my ($out,$stderr,$exit) = capture{system("bedtools sort -i $bed_file | bgzip >$tmp_bed.gz && tabix -p bed $tmp_bed.gz ")};	
 		if ($exit) {
 			$log->logcroak("Unable to create tabix bed $stderr");
 		}
 		else {
 			$tabix_obj = new Tabix(-data => "$tmp_bed.gz");
-			$log->debug("Tabix object created successfully");
+			$log->debug("Tabix object created successfully for $bed_file");
 			return $tabix_obj;
 		}
 	return $tabix_obj;
@@ -192,7 +198,7 @@ Inputs
 =cut
 
 sub _get_gene_bam_object {
-my ($self,$bam_object,$chr,$start,$end,$gene)=@_;
+my ($self,$bam_object,$chr,$start,$end,$gene,$tabix_gt)=@_;
 	my $tmp_gene_file=$self->options->{'tmpdir'}.'/tmp_gene.bam';
 	# create bio db bam object
 	my $bam = Bio::DB::Bam->open($tmp_gene_file,'w');
@@ -225,21 +231,40 @@ my ($self,$bam_object,$chr,$start,$end,$gene)=@_;
 		return "0";
 	} 
 	Bio::DB::Bam->index_build($tmp_gene_file);
-	# create tmp file
-	my $tmp_gene_sorted=$self->options->{'tmpdir'}.'/tmp_gene_name_sorted';
+
 	# name sorted bam required for clipOver
-	Bio::DB::Bam->sort_core(1,$tmp_gene_file,$tmp_gene_sorted);
-	my($clipped_bam)=$self->_run_clipOver("$tmp_gene_sorted.bam");
-	my ($gene_bam)=$self->_get_bam_object($clipped_bam);	
-	my ($coverage) = $gene_bam->features(-type => 'coverage', -seq_id => $chr, -start => $start, -end => $end);
-	return max($coverage->coverage);
 	
-	
-	#option2 samtools mpipeup and GATK [run separately] too slow.
-  # need samtools 1.1 or above which takes care of overlapping read pairs... 
-	#my $cmd= "~/software/samtools-1.2/samtools mpileup $tmp_gene_file -d $MAX_PILEUP_DEPTH -A -f ".$self->options->{'g'}. " -r $region --no-BAQ ";
-	#my ($out,$stderr,$exit) = capture{system($cmd)};
-	#my ($max)=$self->_parse_pileup($out);
+	#----------biodbsam------------------- Option1
+	if($self->options->{'alg'} eq 'biodbsam') {
+	  # create tmp file
+		my ($gene_bam)=$self->_get_bam_object($tmp_gene_file);	
+		my ($coverage) = $gene_bam->features(-type => 'coverage', -seq_id => $chr, -start => $start, -end => $end);
+		return max($coverage->coverage);
+	}
+	#------------ClipOver------------------Option2
+	elsif($self->options->{'alg'} eq 'clipover') {
+	  # create tmp file
+		my $tmp_gene_sorted=$self->options->{'tmpdir'}.'/tmp_gene_name_sorted';
+		# read name sorted bam file
+		Bio::DB::Bam->sort_core(1,$tmp_gene_file,$tmp_gene_sorted);
+		my($clipped_bam)=$self->_run_clipOver("$tmp_gene_sorted.bam");
+		my ($gene_bam)=$self->_get_bam_object($clipped_bam);	
+		my ($coverage) = $gene_bam->features(-type => 'coverage', -seq_id => $chr, -start => $start, -end => $end);
+		return max($coverage->coverage);
+	}
+	#-------------mpileup------------------Option3
+	elsif ($self->options->{'alg'} eq 'mpileup') {	
+  	#need samtools 1.1 or above which takes care of overlapping read pairs... 
+		my $cmd= "$SAMTOOLS_PATH/samtools mpileup $tmp_gene_file -d $MAX_PILEUP_DEPTH -A -f ".$self->options->{'g'}. " -r $chr:$start-$end --no-BAQ ";
+		my($out)=PeakRescue::Base->_run_cmd($cmd);
+		my ($max)=$self->_parse_pileup($out);
+		return $max;
+	}
+	#------------ gatk ----------Option4
+	if($self->options->{'alg'} eq 'gatk') {
+		my ($max)=$self->_run_gatk($tmp_gene_file,$chr,$start,$end,$tabix_gt);
+		return $max;
+	}
 	
 }
 
@@ -250,7 +275,6 @@ Inputs
 =item gene_bam bam file containing gene specific reads
 =back
 =cut
-
 
 sub _run_clipOver {
 	my($self,$gene_bam)=@_;
@@ -269,8 +293,83 @@ sub _run_clipOver {
 	}
 }
 
+=head2  _run_gatk
+run gatk and get peak coverage
+Inputs
+=over 2
+=item gene_bam bam file containing gene specific reads
+=back
+=cut
+
+sub _run_gatk {
+	my($self,$gene_bam,$chr,$start,$end,$tabix_gt)=@_;
+	#my($gt_int_file)=$self->_get_intervals($tabix_gt,$chr,$start,$end);
+	my $tmp_cov=$self->options->{'tmpdir'}.'/tmp.coverage';
+	my $cmd = "java -Xmx2G -jar $GATK_PATH/GenomeAnalysisTK.jar ".
+	"-T DepthOfCoverage ".
+	" -R ".$self->options->{'g'}.
+	" -I $gene_bam ".
+	" -o $tmp_cov ".
+	" --countType COUNT_FRAGMENTS".
+	" -U ALL ".
+	" -L $chr:$start-$end".
+	" --downsampling_type NONE".
+	" -omitIntervals".
+	" -l OFF".
+	" -omitLocusTable".
+	" -omitSampleSummary".
+	" --outputFormat table ";
+	
+ PeakRescue::Base->_run_cmd($cmd);
+ my($max_cov)=$self->_parse_gatk($tmp_cov);
+ 
+ return $max_cov;
+ 
+}
+
+=head2  _get_intervals
+get global transcript intervals
+Inputs
+=over 2
+=item tabix_gt - tabix object containing global transcript intrevals
+=item chr,start,end - gene boundaries
+=back
+=cut
+
+sub _get_intervals{
+	my($self,$tabix,$chr,$start,$end)=@_;
+	my $tmp_gt_file=$self->options->{'tmpdir'}.'/tmp.list';
+	open(my $gt_fh,'>',$tmp_gt_file);
+	my $res = $tabix->query($chr,$start,$end);
+	while(my $record = $tabix->read($res)){		
+		print $gt_fh $record;
+	}
+	return $tmp_gt_file;
+}
+
+=head2  _parse_gatk
+parse gatk coverage file and retuen max coverage peak
+Inputs
+=over 2
+=item tmp_cov - gatk coverage output for given gene interval
+=back
+=cut
+sub _parse_gatk {
+	my($self,$tmp_cov)=@_;
+#Locus   Total_Depth     Average_Depth_sample    Depth_for_flux
+#22:45898118     0       0.00    0
+#22:45898119     0       0.00    0
+	open(my $cov_fh,'<',$tmp_cov)|| $log->logcroak("unable to open $!");
+	my $max;
+	while (<$cov_fh>) {
+		my ($cov) = (split "\t", $_)[2];
+		$max = $cov if $cov > $max;
+	}
+	return $max;
+}
+
 # parse pilpeup output
-# currently no in use
+# currently not in use
 sub _parse_pileup {
 	my ($self,$pileup_out)=@_;	
 	my $max;
@@ -281,7 +380,6 @@ sub _parse_pileup {
 	}
 	$max;
 }
-
 
 =head2  _print_peak
 print peak data to file

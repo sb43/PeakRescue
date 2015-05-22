@@ -19,7 +19,7 @@ my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
 # recursively cleanups folder and underlying substructure
 sub cleanup_dir {
-    my ($dir)=@_;
+    my ($self,$dir)=@_;
     $log->logcroak("Unable to find cleanup dir:$dir") if(! -d $dir);
     remove_tree($dir);
     $log->logcroak("Unable to remove cleanup dir:$dir") if( -d $dir);
@@ -38,7 +38,7 @@ Inputs
 =cut
 
 sub _create_fh {
-	my ($file_names,$overwrite)=@_;
+	my ($self,$file_names,$overwrite)=@_;
 	my $fh_array;
 	foreach my $file(@$file_names) {
 		if( -e $file && !$overwrite) {
@@ -53,6 +53,26 @@ sub _create_fh {
 	return $fh_array;
 }
 
+
+=head2 _run_cmd
+runs external command
+Inputs
+=over 2
+=item cmd - command to run
+=back
+=cut
+
+sub _run_cmd {
+	my($self,$cmd)=@_;
+	my ($out,$stderr,$exit)=capture{system($cmd)};
+	if($exit) {
+			$log->logcroak("Failed to run <<<<<<< \n $cmd  <<<<<< \n with status <<<<<< \n OUT:$out  :ERR: $stderr EXIT:$exit \n <<<<<<< ");
+	}
+	else {
+		$log->debug("\ncommand <<<<<< \n $cmd  \n <<<<<<<<< run successfully");
+	}
+	return $out;
+}
 
 =head2 _close_fh
 Close file handlers 

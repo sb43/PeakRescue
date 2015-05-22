@@ -92,21 +92,21 @@ my $gtf_file=$self->options->{'gtf'};
 my $gtf_file_no_ext=$self->options->{'f'};
 	$log->debug("Using GTF file: ".$gtf_file);
 	#check for bgzip and index file...
-	if (-e "$gtf_file_no_ext.sorted.gz" && -e "$gtf_file_no_ext.sorted.gz.tbi" ) 
+	if (-e "$gtf_file_no_ext\_sorted.gz" && -e "$gtf_file_no_ext\_sorted.gz.tbi" ) 
 	{
 		$log->debug("File $gtf_file_no_ext.sorted.gz and Tabix index exists: skipping this step ....");
 	}
 	#Create tabix indexed gtf...
 	else{
 		$log->debug("Creting sorted gtf and tabix index file");
-		my ($out,$stderr,$exit) = capture{system("zless $gtf_file | sort -k1,1 -k4,4n | bgzip  >$gtf_file_no_ext.sorted.gz && tabix -p gff $gtf_file_no_ext.sorted.gz")};
+		my ($out,$stderr,$exit) = capture{system("zless $gtf_file | sort -k1,1 -k4,4n | bgzip  >$gtf_file_no_ext\_sorted.gz && tabix -p gff $gtf_file_no_ext\_sorted.gz")};
 		if($exit) {
 			$log->logcroak('Unable to create sorted gtf file');
 		}
 	}
 	#create Tabix object...
 	$log->debug("Tabix indexed gtf file exits, Creating Tabix object");
-	my $tabix_obj = new Tabix(-data => "$gtf_file_no_ext.sorted.gz");
+	my $tabix_obj = new Tabix(-data => "$gtf_file_no_ext\_sorted.gz");
 	$log->debug("Tabix object created successfully");
 	$self->{'tabix_obj'}=$tabix_obj;
 	return;
@@ -126,15 +126,22 @@ sub _check_tabix_overlap {
 	my $gtf_record;
 	
 	# create outpt bed files names...
-	my $unique_regions_bed=$self->options->{'f'}.'.unique_regions.bed';
-	my $global_transcript_bed=$self->options->{'f'}.'.global_transcript.bed';
-	my $geneboundaries_bed=$self->options->{'f'}.'.geneboundaries.bed';
-	my $global_transcript_gene_length_bed=$self->options->{'f'}.'.global_transcript_gene_length.tab';
-	my $unique_segment_gene_length_bed=$self->options->{'f'}.'.unique_segment_gene_length.tab';
-	my $non_overlapping_genes=$self->options->{'f'}.'.non_overlapping_geneboundaries.bed';
+	my $unique_regions_bed=$self->options->{'f'}.'_unique_regions.bed';
+	my $global_transcript_bed=$self->options->{'f'}.'_global_transcript.bed';
+	my $geneboundaries_bed=$self->options->{'f'}.'_geneboundaries.bed';
+	my $global_transcript_gene_length_bed=$self->options->{'f'}.'_global_transcript_gene_length.tab';
+	my $unique_segment_gene_length_bed=$self->options->{'f'}.'_unique_segment_gene_length.tab';
+	my $non_overlapping_genes=$self->options->{'f'}.'_non_overlapping_geneboundaries.bed';
 
+	$self->{'unique_regions'}=$unique_regions_bed;
+	$self->{'global_transcript'}=$global_transcript_bed;
+	$self->{'geneboundaries'}=$geneboundaries_bed;
+	$self->{'global_transcript_gene_length'}=$global_transcript_gene_length_bed;
+	$self->{'unique_segment_gene_length'}=$unique_segment_gene_length_bed;
+	$self->{'non_overlapping_geneboundaries'}=$non_overlapping_genes;
+	
 	# create file handlers to use...
-	my ($fh_array)=PeakRescue::Base::_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed,$non_overlapping_genes],1);
+	my ($fh_array)=PeakRescue::Base->_create_fh([$unique_regions_bed,$global_transcript_bed,$geneboundaries_bed,$global_transcript_gene_length_bed,$unique_segment_gene_length_bed,$non_overlapping_genes],1);
 	# add header lines
 	$self->_add_header($fh_array);
 	if($self->options->{'u'}) {
@@ -192,9 +199,8 @@ sub _check_tabix_overlap {
 	PeakRescue::Base::_close_fh($fh_array);
 	$log->debug(">>>>>>>GTF preprosessing completed successfully for:".$self->options->{'gtf'});
 	#cleanup tmp folder
-	PeakRescue::Base::cleanup_dir($self->options->{'tmpdir'});
+	PeakRescue::Base->cleanup_dir($self->options->{'tmpdir'});
 }
-
 
 =head2 _add_header
 Add header lines to each file
@@ -222,7 +228,6 @@ sub _add_header {
  1;
 }
 
-
 =head2 _process_gtf_lines_per_gene
 get GTF lines per genes to merge and get GLOBAL transcript and unique intervals 
 Inputs
@@ -243,7 +248,7 @@ sub _process_gtf_lines_per_gene {
 		if($count % 100 == 0) {
 			$log->debug("Completed :$count genes of total:$total genes on chromosme:$chr");
 		}
-		my($fh)=PeakRescue::Base::_create_fh([$tmp_gene_file],1);
+		my($fh)=PeakRescue::Base->_create_fh([$tmp_gene_file],1);
 		my $fh_str=@$fh[0];
 		print $fh_str $gtf_record->{$gene};
 		my ($unique_regions,$gt_intervals,$gt_start,$gt_end,$gt_length,$unique_seg_gene_length,$overlaped_gene_flag) = $self->_merge_intervals($gene,$tmp_gene_file);
@@ -324,7 +329,7 @@ sub _get_unique_regions {
 	my $overlaped_gene_flag=0;
 	my $tmp_sorted_bed=$self->options->{'tmpdir'}.'/tmp_gene_sortedBed.txt';
 	my $tmp_overlap_file=$self->options->{'tmpdir'}.'/tmp_genes_overlap.txt';
-	my($fh_overlap)=PeakRescue::Base::_create_fh([$tmp_overlap_file],1);
+	my($fh_overlap)=PeakRescue::Base->_create_fh([$tmp_overlap_file],1);
 	my $fh_overlap_str=@$fh_overlap[0];
 	
 	my $tabix=$self->tabix_obj;
@@ -343,7 +348,7 @@ sub _get_unique_regions {
 		close($fh_overlap_str);
 		# if overlapped genes found do subtract bed 
 		if($overlaped_gene_flag){
-			my($fh_sorted)=PeakRescue::Base::_create_fh([$tmp_sorted_bed],1);
+			my($fh_sorted)=PeakRescue::Base->_create_fh([$tmp_sorted_bed],1);
 			my $fh_soretd_str=@$fh_sorted[0];
 			print $fh_soretd_str $output;
 			my($out,$stderr,$exit) = capture {system("subtractBed -a $tmp_sorted_bed -b $tmp_overlap_file | mergeBed -i - ")};
