@@ -18,7 +18,7 @@ my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
 try {
   my ($options) = option_builder();
-  PeakRescue::GlobalTranscript->new($options);
+  my($gtf_obj)=PeakRescue::GlobalTranscript->new($options);
 }
 catch {
  $log->logcroak($_);

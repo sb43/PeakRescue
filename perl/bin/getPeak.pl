@@ -34,6 +34,8 @@ sub option_builder {
 					'h|help'    => \$opts{'h'},
 					'bam|sampleBam=s' => \$opts{'bam'},
 					'bed|intervalBed=s' => \$opts{'bed'},
+					'gt|globalTranscript=s' => \$opts{'gt'},
+					'alg|algorithm=s' => \$opts{'alg'},
 					'g|genomeFasta=s' => \$opts{'g'},
 					'o|outdir=s'  => \$opts{'o'},
 					'v|version'  => \$opts{'v'},
@@ -48,7 +50,10 @@ sub option_builder {
 	}
 	pod2usage(q{'-bed' bed file must be specified.}) unless(defined $opts{'bed'}) ;
 	pod2usage(q{'-bam' bam file must be specified.}) unless(defined $opts{'bam'}) ;
+	pod2usage(q{'-gt' global transcript must be specified.}) unless(defined $opts{'gt'}) ;
 	pod2usage(q{'-g' genome file must be specified.}) unless(defined $opts{'g'}) ;
+	pod2usage(q{'-alg' at least one algorithm must be specified.}) unless(defined $opts{'alg'}) ;
+
 	return \%opts;
 }
 
@@ -67,7 +72,9 @@ getPeak.pl -bam -bed   [ -o -h -v ]
 Required Options (bam and bed interval files must be defined):
 
   --intervalBed       (-bed) gene interval bed file 
+  --globalTranscript  (-gt) global transcript interval bed file 
   --sampleBam         (-bam) sample bam file 
+  --algorithm         (-alg) algorithm to be use for coverage calculation [ biodbsam, clipover, mpileup, gatk ]
   --genomeFasta       (-g) fasta reference genome file 
   
 Optional :

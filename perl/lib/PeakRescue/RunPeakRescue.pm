@@ -2,6 +2,7 @@ package PeakRescue::RunPeakRescue;
 use PeakRescue;
 our $VERSION = PeakRescue->VERSION;
 
+use Bio::DB::Sam;
 use strict;
 use FindBin qw($Bin);
 use List::Util qw(max min);
@@ -11,10 +12,19 @@ use File::Basename;
 use File::Spec;
 use Data::Dumper;
 use Log::Log4perl;
+use Const::Fast qw(const);
 Log::Log4perl->init("$Bin/../config/log4perl.gt.conf");
 my $log = Log::Log4perl->get_logger(__PACKAGE__);
 
 use PeakRescue::Base;
+use PeakRescue::GlobalTranscript;
+use PeakRescue::GetPeak;
+
+
+# temporary paths for testing, can be set in config ini file
+const my $PYTHON_PATH => "";
+const my $HTSEQ_PATH => "/nfs/users/nfs_s/sb43/software/HTSeq-0.6.1p1/HTSeq/scripts";
+const my $PICARD_PATH => "/software/CGP/external-apps/picard-tools-1.80/lib";
 
 sub new {
 	my ($class,$options)=@_;
@@ -64,18 +74,25 @@ sub _init {
 
 
 
-sub run_peakrescue {
+sub run_pipeline {
 	my($self)=@_;
 	$self->_run_htseq;
 	$self->_run_htseq_disambiguate;
-  $self->process_sam;
+  $self->_process_sam;
+  $self->_process_gtf;
+  $self->_get_peak;
   
-  # run rest of the steps
+  # uncomment to test and run rest of the steps...
   
+  #$self->_runPeakrescue;
+  #$self->_process_output;
+  
+
   $log->info("PeakRescue pipeline completed successfully");
   $log->info("Process log is written in peakrescue.log");
-  $log->info("Results are stored in ".$self->options->{'o'});
-  
+  $log->info("Results are stored in folder ".$self->options->{'o'});
+  #$log->info("Final output written in ".$self->option->{'final_out'}); 
+  #cleanup tmp folder
   return 1;
 }
 
@@ -92,34 +109,27 @@ Inputs
 
 sub _run_htseq {
 	my($self)=@_;
-	my $gtf = $self->options->{'gtf'};	
-	my $bam = $self->options->{'bam'};
-	my $htseq_sam=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_htseq.sam';
-	my $htseq_count=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_htseq_count.out';
+	#my $gtf = $self->options->{'gtf'};	
+	#my $bam = $self->options->{'bam'};
+	# store output ...
+	$self->options->{'htseq_sam'}=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_htseq.sam';
+	$self->options->{'htseq_count'}=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_htseq_count.out';
 	
 	# requires read name sorted sam file...
-	my $cmd = "samtools sort -on $bam tmpsort | samtools view - | ".
+	my $cmd = "samtools sort -on ".$self->options->{'bam'}." tmpsort | samtools view - | ".
 		"python ".
-		"/nfs/users/nfs_s/sb43/software/HTSeq-0.6.1p1/HTSeq/scripts/count_0.5.3p3.py ".
+		"$HTSEQ_PATH/count_0.5.3p3.py ".
 			"--mode=union ".
 			"--stranded=no ".
-			"--samout=$htseq_sam ".
-			"--type=exon ".
+			"--samout=".$self->options->{'htseq_sam'}.
+			" --type=exon ".
 			"--idattr=gene_id ". 
 			"- ".
-			"$gtf ".
-			">$htseq_count";
-	  
-	my ($out,$stderr,$exit)=capture{system($cmd)};
-	if($exit) {
-			$log->logcroak("HTSeq count step failed with status <<<<<< OUT:$out  :ERR: $stderr EXIT:$exit");
-	}
-	else {
-		$log->debug("Step1 <<<<<<< HTSeq completed successfully");
-	}
+			$self->options->{'gtf'}.
+			" >".$self->options->{'htseq_count'};
+	# run command
+	PeakRescue::Base->_run_cmd($cmd);
 	
-	$self->options->{'htseq_sam'}=$htseq_sam;
-	$self->options->{'htseq_count'}=$htseq_count;
 }
 
 =head2 _run_htseq_disambiguate
@@ -134,84 +144,160 @@ Inputs
 
 sub _run_htseq_disambiguate {
 	my($self)=@_;
-	my $gtf = $self->options->{'gtf'};	
-	my $htseq_sam=$self->options->{'htseq_sam'};
-	my $disambiguated_sam=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_disambiguated.sam';
-	my $disambiguated_count=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_disambiguated_count.out';
-	my $multimapped_rngn=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_multimapped_readname_gene_name.out';
-	my $amb_rngn=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_ambiguous_readname_gene_name.out';
+	$self->options->{'disambiguated_sam'} =$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_disambiguated.sam';
+	$self->options->{'disambiguated_count'}=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_disambiguated_count.out';
+	$self->options->{'multimapped_rngn'}=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_multimapped_readname_gene_name.out';
+	$self->options->{'amb_rngn'}=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_ambiguous_readname_gene_name.out';
 
-	# requires read name sorted sam file...
-	my $cmd = "grep -P \"ambiguous|alignment_not_unique\" $htseq_sam | ".
-		"python ".
-		"/nfs/users/nfs_s/sb43/software/HTSeq-0.6.1p1/HTSeq/scripts/count_htseq_v31.py ".
+	my $cmd = "grep -P \"ambiguous|alignment_not_unique\" ".$self->options->{'htseq_sam'}.
+		" | python ".
+		"$HTSEQ_PATH/count_htseq_v31.py ".
 			"--mode=union ".
 			"--stranded=no ".
-			"--samout=$disambiguated_sam ".
-			"--type=exon ".
+			"--samout=".$self->options->{'disambiguated_sam'}.
+			" --type=exon ".
 			"--idattr=gene_id ". 
 			"- ".
-			"$gtf ".
-			"$multimapped_rngn ".
-			"$amb_rngn ".
-			">$disambiguated_count";
+			$self->options->{'gtf'}." ".
+			$self->options->{'multimapped_rngn'}." ".
+			$self->options->{'amb_rngn'}." ".
+			" >".$self->options->{'disambiguated_count'};
+	# run command
+	PeakRescue::Base->_run_cmd($cmd);
 	
-	my ($out,$stderr,$exit)=capture{system($cmd)};
-	if($exit) {
-			$log->logcroak("HTSeq disambiguation step failed with status <<<<<< OUT:$out  :ERR: $stderr EXIT:$exit");
-	}
-	else {
-		$log->debug("Step2 <<<<<<< HTSeq disambiguation step completed successfully");
-	}
+}
+
+
+=head2 _process_sam
+create Karyotypic sorted bam file using picard required for GATK pcoverage calculation
+Inputs
+=over 2
+=back
+=cut
+
+sub _process_sam {
+	my ($self)=@_;
+  my $tmp_combined_bam=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_combined_sorted.bam';
+	$self->options->{'kayrotypic'}=$self->options->{'tmpdir'}.'/'.$self->options->{'f'}.'_kayrotypic.bam';
 	
-	$self->options->{'disambiguated_sam'}=$disambiguated_sam;
-	$self->options->{'disambiguated_count'}=$disambiguated_count;
-	$self->options->{'multimapped_rngn'}=$multimapped_rngn;
-	$self->options->{'amb_rngn'}=$amb_rngn;
+  # add disambiguated reads containing additional XF:Z tags to original sam with updated 
+ 	my $cmd = "samtools view -H ".
+ 	   $self->options->{'bam'}.
+ 	  " | cat -  ".$self->options->{'disambiguated_sam'}. " ".$self->options->{'htseq_sam'}." | samtools view -bS -| ".
+		"samtools sort -o - tmp_sort >$tmp_combined_bam";  # took 19 min to create 1.6GB file
+  
+    PeakRescue::Base->_run_cmd($cmd);
+  
+    Bio::DB::Bam->index_build($tmp_combined_bam);
+    #$cmd="samtools index $tmp_combined_bam";
+   	#PeakRescue::Base->_run_cmd($cmd);
+   	
+ # creates bam to Karyotipic sorted bam
+		$cmd = "java -Xmx2G -jar $PICARD_PATH/ReorderSam.jar ".
+						"I= $tmp_combined_bam ".
+						"O= ".$self->options->{'kayrotypic'}.
+						" REFERENCE= ".$self->options->{'g'};
+										
+		PeakRescue::Base->_run_cmd($cmd);
+		Bio::DB::Bam->index_build($self->options->{'kayrotypic'});
+		#$cmd="samtools index ".$self->options->{'kayrotypic'};
+		#PeakRescue::Base->_run_cmd($cmd);
+		
 }
 
-sub process_sam {
+=head2 _process_gtf
+process gtf file using GlobalTranscript package
+Inputs
+=over 2
+=back
+=cut
 
- # creates sam to Karyotipic sorted bam
+sub _process_gtf {
+	my ($self)=@_;
+	$self->options->{'u'}=1;
+	my $gt=PeakRescue::GlobalTranscript->new($self->options);
+	
+	$self->options->{'unique_regions'}=$gt->{'unique_regions'};
+	$self->options->{'global_transcript'}=$gt->{'global_transcript'};
+	$self->options->{'geneboundaries'}=$gt->{'geneboundaries'};
+	$self->options->{'global_transcript_gene_length'}=$gt->{'global_transcript_gene_length'};
+	$self->options->{'unique_segment_gene_length'}=$gt->{'unique_segment_gene_length'};
+	$self->options->{'non_overlapping_geneboundaries'}=$gt->{'non_overlapping_geneboundaries'};
+	
+}
+
+=head2 _get_peak
+get peak 
+Inputs
+=over 2
+=back
+=cut
+
+sub _get_peak {
+	my ($self)=@_;
+	my $getPeak_options;
+	$getPeak_options->{'bed'}=$self->options->{'geneboundaries'};
+  $getPeak_options->{'bam'}=$self->options->{'kayrotypic'};
+  $getPeak_options->{'g'}=$self->options->{'g'};
+  $getPeak_options->{'gt'}=$self->options->{'global_transcript'};
+  $getPeak_options->{'o'}=$self->options->{'o'};
+  $getPeak_options->{'alg'}=$self->options->{'alg'};
+ 	my $peak=PeakRescue::GetPeak->new($getPeak_options);
+  $self->options->{'peak_file'}=$peak->{'peak_file'};
+}
+
+=head2 _runPeakrescue
+run peakrescue  
+Inputs
+=over 2
+=back
+=cut
+
+sub _runPeakrescue {
+	my ($self)=@_;
+	my $peak_file = $self->options->{'peak_file'};
+	my $multiReadNameGeneName = $self->options->{'multimapped_rngn'};
+	my $ambReadNameGeneName = $self->options->{'amb_rngn'};
+	
+	my $combinedReadNameGeneName = $self->options->{'tmpdir'}.'/tmpCombinedRNGN.tab';
+	
+	my $cmd_cat = " cat $ambReadNameGeneName $multiReadNameGeneName > $combinedReadNameGeneName";
+	PeakRescue::Base->_run_cmd($cmd_cat);
+	
+	# we can choose which file to use 
+	
+	my $peak_contibutions=$self->options->{'o'}.'/peakContibutions.out';
+	my $cmd= "python peakRescue_readToGeneAssignment.py -p  $peak_file -r $combinedReadNameGeneName -o $peak_contibutions.out";
+	
+	PeakRescue::Base->_run_cmd($cmd);
+	
+	$self->options->{'peakContributions'}=$peak_contibutions;
 
 }
 
+=head2 _process_output
+process output files to create final output file with FPKM 
+Inputs
+=over 2
+=back
+=cut
 
-
-sub combine_rngn {
-# combine multimapped_rngn and amb_rngn  OR output single file from modified htseq whichever is quicker
-
-
-}
-
-
-sub process_gtf {
-
- # call processGTF.pl
-
-}
-
-sub get_peak {
-
- # call
-
-}
-
-
-sub runPeakrescue {
-
-# python peakRescue_readToGeneAssignment.py -p peak.tab -r readNameGeneName.tab 
-# output peakContibutions.out
-}
-
-
-sub process_output {
-
-# mergeFiles.py -bed geneboundaries.bed -f1 htseq_count.out -f2 disambiguated_count.out -f3 peakContibutions.out  -o peakRescueFinalCount.out
-
-# output PeakRescueFinalResults.out
+sub _process_output {
+	my ($self)=@_;
+	my $final_count_with_fpkm=$self->options->{'o'}.'/peakRescueFinalCount.out';
+	
+	my $cmd = " python mergeFiles.py -geneLen ".$self->options->{'global_transcript_gene_length'}.
+	" -htseq_count ".$self->options->{'htseq_count'}.
+	" -diamb_count ".$self->options->{'disambiguated_count'}.
+	" -contri ". $self->options->{'peakContributions'}.
+	" -o $final_count_with_fpkm";
+	
+  PeakRescue::Base->_run_cmd($cmd);
+  $self->option->{'final_out'} = $final_count_with_fpkm;
+  PeakRescue::Base->cleanup_dir($self->options->{'tmpdir'});
 
 }
+
 
 
 sub options {
