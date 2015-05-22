@@ -19,7 +19,7 @@ my $log = Log::Log4perl->get_logger(__PACKAGE__);
 try {
   my ($options) = option_builder();
   my $peak_rescue=PeakRescue::RunPeakRescue->new($options);
-     $peak_rescue->run_peakrescue;
+     $peak_rescue->run_pipeline;
   
 }
 catch {
@@ -35,6 +35,7 @@ sub option_builder {
 					'bam|sampleBam=s' => \$opts{'bam'},
 					'gtf|gtfFile=s' => \$opts{'gtf'},
 					'g|genomeFasta=s' => \$opts{'g'},
+					'alg|algorithm=s' => \$opts{'alg'},
 					'o|outdir=s'  => \$opts{'o'},
 					'v|version'  => \$opts{'v'},
 	);
@@ -49,6 +50,9 @@ sub option_builder {
 	pod2usage(q{'-gtf' gtf file must be specified.}) unless(defined $opts{'gtf'}) ;
 	pod2usage(q{'-bam' bam file must be specified.}) unless(defined $opts{'bam'}) ;
 	pod2usage(q{'-g' genome file must be specified.}) unless(defined $opts{'g'}) ;
+	pod2usage(q{'-alg' at least one algorithm must be specified.}) unless(defined $opts{'alg'});
+	pod2usage(q{'-o' output location must be specified}) unless(defined $opts{'o'});
+
 	return \%opts;
 }
 
@@ -60,17 +64,17 @@ runPeakRescue.pl - run PeakRescue pipeline
 
 =head1 SYNOPSIS
 
-runPeakRescue.pl  -bam -gtf -g  [ -o -h -v ]
+runPeakRescue.pl  -bam -gtf -g -a -o [ -h -v ]
 
 Required Options (bam and bed interval files must be defined):
 
   --sampleBam         (-bam) sample bam file 
   --gtfFile           (-gtf) genome gtf file 
   --genomeFasta       (-g) fasta reference genome file 
+  --algorithm         (-alg) algorithm to be use for coverage calculation [ biodbsam, clipover, mpileup, gatk ]
+  --outdir            (-o) outdir [ Path to output directory ]
   
 Optional :
-
-  --outdir           (-o) outdir [ Path to output directory ]
   --help             (-h)  This message
   --version          (-v) displays version number of this software
 
