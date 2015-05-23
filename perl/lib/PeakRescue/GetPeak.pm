@@ -74,9 +74,10 @@ sub _init {
 	$options->{'tmpdir'}=$options->{'o'}.'/'.'tmp_peak';
 	$self->{'options'} = $options;
 	
-	$log->debug("Using bam file:".$options->{'bam'});
-	$log->debug("Using bed file:".$options->{'bed'});
-	$log->debug("Using temp dir:".$options->{'tmpdir'});
+	$log->debug("<<<< Using bam file:".$options->{'bam'});
+	$log->debug("<<<< Using bed file:".$options->{'bed'});
+	$log->debug("<<<< Using coverage calculation method: ".$options->{'alg'});
+	$log->debug("<<<< Using temp dir:".$options->{'tmpdir'});
 	return;
 }
 
