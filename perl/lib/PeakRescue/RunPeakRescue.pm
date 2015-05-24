@@ -191,7 +191,8 @@ sub _process_sam {
 		$cmd = "java -Xmx2G -jar $PICARD_PATH/ReorderSam.jar ".
 						"I= $tmp_combined_bam ".
 						"O= ".$self->options->{'kayrotypic'}.
-						" REFERENCE= ".$self->options->{'g'};
+						" REFERENCE= ".$self->options->{'g'}.
+						" ALLOW_CONTIG_LENGTH_DISCORDANCE= 1";
 										
 		PeakRescue::Base->_run_cmd($cmd);
 		Bio::DB::Bam->index_build($self->options->{'kayrotypic'});
